@@ -1,33 +1,98 @@
-name: Build APK (Docker Container Method)
+name: CI/CD Pipeline for Kivy App
 
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    container:
-      image: kivy/buildozer:latest
-      options: --privileged
-
-    env:
-      DOCKER_BUILDKIT: 0
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      # Step 1: Checkout code
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Build APK
-        run: |
-          if [ ! -f buildozer.spec ]; then
-            buildozer init
-          fi
-          buildozer android debug
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      # Step 2: Set up Python
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
         with:
-          name: kivy-apk
-          path: bin/*.apk
+          python-version: '3.10'
+
+      # Step 3: Install system dependencies (required for Kivy)
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libgl1-mesa-dev \
+            libgles2-mesa-dev \
+            libsdl2-dev \
+            libsdl2-image-dev \
+            libsdl2-mixer-dev \
+            libsdl2-ttf-dev \
+            pkg-config \
+            libjpeg-dev \
+            libtiff-dev \
+            libfreetype6-dev
+
+      # Step 4: Install Python dependencies
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install wheel
+          pip install -r requirements.txt
+
+      # Step 5: Verify Kivy can be imported and version
+      - name: Check Kivy installation
+        run: |
+          python -c "import kivy; print(f'Kivy version: {kivy.__version__}')"
+
+      # Step 6: Run app in headless mode (KIVY_HEADLESS for CI)
+      - name: Run Kivy app (headless mode)
+        run: |
+          export KIVY_HEADLESS=1
+          python -m your_app_module  # Replace with your main app file, e.g., main.py
+        env:
+          DISPLAY: :99.0
+        timeout-minutes: 5
+
+      # Optional: Add basic linting
+      - name: Lint with flake8
+        run: |
+          pip install flake8
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+
+  # Optional: Add deployment job (e.g., to PyPI, GitHub Releases, or standalone build)
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install build
+
+      - name: Build distribution
+        run: |
+          python -m build
+
+      - name: Deploy to GitHub Packages
+        uses: pypa/gh-action-pypi-deploy@release/v1
+        with:
+          user: __token__
+          password: ${{ secrets.PYPI_API_TOKEN }}  # Optional: publish to PyPI
