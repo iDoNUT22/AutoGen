@@ -1,4 +1,4 @@
-name: Build APK
+name: Build Kivy APK
 
 on:
   push:
@@ -6,45 +6,101 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-apk:
     runs-on: ubuntu-latest
+
+    env:
+      ANDROID_SDK_ROOT: /home/runner/.buildozer/android/platform/android-sdk
+      JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+      PATH: ${{ env.ANDROID_SDK_ROOT }}/cmdline-tools/latest/bin:${{ env.ANDROID_SDK_ROOT }}/platform-tools:$JAVA_HOME/bin:$PATH
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+
+      - name: Cache Buildozer (SDK, NDK, Python deps)
+        uses: actions/cache@v4
+        with:
+          path: ~/.buildozer
+          key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            ${{ runner.os }}-buildozer-
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Install Dependencies
+      - name: Install System Dependencies
         run: |
-          sudo apt update
+          sudo apt update -y
           sudo apt install -y \
-            zip unzip openjdk-17-jdk \
-            libncurses5 libstdc++6 \
+            openjdk-17-jdk \
             libffi-dev libssl-dev \
-            python3-pip git wget curl \
-            build-essential ccache
+            libglib2.0-dev libsm6 libxext6 \
+            python3-pip build-essential ccache
 
-      - name: Install Buildozer
+      - name: Install Python Dependencies
         run: |
           pip install --upgrade pip
-          pip install buildozer cython
+          pip install Cython==0.29.33
+          pip install https://github.com/kivy/buildozer/archive/refs/heads/master.zip
 
-      - name: Initialize Buildozer (if needed)
+      - name: Create buildozer.spec if missing
         run: |
           if [ ! -f buildozer.spec ]; then
+            echo "⚠️ buildozer.spec not found, generating..."
             buildozer init
+            # Patch default spec
+            sed -i 's|source.dir = ./|source.dir = .|' buildozer.spec
+            sed -i 's|# android.api = 30|android.api = 31|' buildozer.spec
+            sed -i 's|# android.minapi = 21|android.minapi = 21|' buildozer.spec
+            sed -i 's|# android.sdk = 20|android.sdk = 31|' buildozer.spec
+            sed -i 's|# android.ndk = 25.1.8937393|android.ndk = 25.1.8937393|' buildozer.spec
           fi
 
-      - name: Build APK
+      - name: Accept Android SDK Licenses
         run: |
-          buildozer android debug
+          mkdir -p $ANDROID_SDK_ROOT/licenses
+          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > $ANDROID_SDK_ROOT/licenses/android-sdk-license
+          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" > $ANDROID_SDK_ROOT/licenses/android-sdk-preview-license
+          cat $ANDROID_SDK_ROOT/licenses/android-sdk-license
 
-      - name: Upload APK
+      - name: Install Android SDK & NDK (with caching support)
+        run: |
+          if [ ! -d "$ANDROID_SDK_ROOT" ]; then
+            echo "📦 Installing Android SDK & NDK..."
+            mkdir -p $ANDROID_SDK_ROOT/cmdline-tools/latest
+            cd /tmp
+            wget -q https://dl.google.com/android/repository/commandlinetools-linux-10406996_latest.zip
+            unzip -q commandlinetools-linux-*.zip
+            cp -r cmdline-tools/* $ANDROID_SDK_ROOT/cmdline-tools/latest/ || true
+            rm -rf $ANDROID_SDK_ROOT/cmdline-tools/latest/cmdline-tools
+          else
+            echo "✅ SDK/NDK already cached, skipping install"
+          fi
+
+          # Make sure tools are executable
+          chmod +x $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/*
+          chmod +x $ANDROID_SDK_ROOT/platform-tools/*
+
+          # Install SDK components (if not already present)
+          sdkmanager --sdk_root=$ANDROID_SDK_ROOT --install "platform-tools"
+          sdkmanager --sdk_root=$ANDROID_SDK_ROOT --install "platforms;android-31"
+          sdkmanager --sdk_root=$ANDROID_SDK_ROOT --install "build-tools;34.0.0"
+          sdkmanager --sdk_root=$ANDROID_SDK_ROOT --install "ndk;25.1.8937393"
+          sdkmanager --sdk_root=$ANDROID_SDK_ROOT --install "cmake;3.10.2.4988404"
+
+      - name: Build APK (Debug)
+        run: |
+          echo "🚀 Starting Buildozer APK build..."
+          buildozer android debug
+        env:
+          PYTHONIOENCODING: utf-8
+
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kivy-apk
+          name: kivy-app-debug.apk
           path: bin/*.apk
+          if-no-files-found: error
