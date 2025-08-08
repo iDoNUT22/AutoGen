@@ -4,6 +4,7 @@ A powerful Kivy-based application that allows users to design and generate custo
 📁 Project Structure
 1. floorplan_designer.py – Logic Layer
 Manages all core logic behind floor plan behavior.
+-----
 
 Key Features:
 
