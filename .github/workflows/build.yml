@@ -12,6 +12,9 @@ jobs:
       image: kivy/buildozer:latest
       options: --privileged
 
+    env:
+      DOCKER_BUILDKIT: 0
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
